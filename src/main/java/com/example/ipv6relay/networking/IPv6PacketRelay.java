@@ -32,9 +32,9 @@ public class IPv6PacketRelay {
     private ScheduledFuture<?> tunnelMaintainerFuture;
     private ScheduledExecutorService tunnelScheduler;
 
-    // 隧道池大小 - 更小的池，减少性能消耗
-    private static final int MIN_TUNNELS = 1;
-    private static final int MAX_TUNNELS = 3;
+    // 隧道池大小 - 保持更多备用隧道
+    private static final int MIN_TUNNELS = 5;
+    private static final int MAX_TUNNELS = 10;
     private final AtomicInteger activeTunnels = new AtomicInteger(0);
 
     public IPv6PacketRelay() {
@@ -124,7 +124,7 @@ public class IPv6PacketRelay {
             t.setDaemon(true);
             return t;
         });
-        // 每5秒检查一次，保持 MIN_TUNNELS 条隧道
+        // 每1秒检查一次，保持 MIN_TUNNELS 条隧道
         tunnelMaintainerFuture = tunnelScheduler.scheduleAtFixedRate(() -> {
             if (!connected.get() || assignedPort <= 0) return;
             int current = activeTunnels.get();
@@ -134,7 +134,7 @@ public class IPv6PacketRelay {
                     createTunnel();
                 }
             }
-        }, 1, 5, TimeUnit.SECONDS);
+        }, 1, 1, TimeUnit.SECONDS);
         // 立即创建初始隧道
         for (int i = 0; i < MIN_TUNNELS; i++) {
             createTunnel();
