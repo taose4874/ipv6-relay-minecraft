@@ -27,18 +27,18 @@ jobs:
         gradle-version: '8.8'
 
     - name: 构建Mod
-      run: gradle build
+      run: gradle build --no-daemon -x test
 
     - name: 编译中继服务器
-      run: javac -encoding UTF-8 RelayServerApp.java
+      run: |
+        mkdir -p staging
+        javac -encoding UTF-8 -d staging RelayServerApp.java
 
     - name: 打包中继服务器JAR
       run: |
         mkdir -p staging/META-INF
         echo "Manifest-Version: 1.0" > staging/META-INF/MANIFEST.MF
         echo "Main-Class: RelayServerApp" >> staging/META-INF/MANIFEST.MF
-        echo "" >> staging/META-INF/MANIFEST.MF
-        cp RelayServerApp*.class staging/
         cd staging
         jar -cfm ../RelayServer.jar META-INF/MANIFEST.MF *.class
         cd ..

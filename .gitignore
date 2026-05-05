@@ -4,6 +4,7 @@ temp_build/
 temp_extract/
 *.class
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 !IPv6中继服务器/RelayServer.jar
 !IPv6中继服务器/IPv6Relay-1.0.0.jar
 
