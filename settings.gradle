@@ -1,0 +1,11 @@
+pluginManagement {
+    repositories {
+        mavenLocal()
+        maven { url "https://neoforged.forgecdn.net/releases" }
+        maven { url "https://maven.neoforged.net/releases" }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = "IPv6Relay"

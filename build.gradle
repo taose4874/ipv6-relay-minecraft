@@ -1,0 +1,72 @@
+plugins {
+    id 'net.neoforged.moddev' version '2.0.141'
+    id 'java'
+}
+
+version = "1.0.0"
+group = "com.example"
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    maven { url "https://neoforged.forgecdn.net/releases" }
+    maven { url "https://maven.neoforged.net/releases" }
+    mavenCentral()
+}
+
+neoForge {
+    version = '21.1.211'
+
+    runs {
+        client {
+            client()
+        }
+        server {
+            server()
+        }
+    }
+
+    mods {
+        ipv6relay {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/main/resources' }
+
+tasks.processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    var replaceValues = [
+        'version': project.version,
+        'mod_id': 'ipv6relay',
+        'neo_version': '21.1.211',
+        'mc_version': '1.21.1'
+    ]
+    inputs.properties replaceValues
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand replaceValues
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'     : 'ipv6relay',
+            'Specification-Vendor'    : 'example',
+            'Specification-Version'   : '1',
+            'Implementation-Title'    : project.name,
+            'Implementation-Version'  : project.jar.archiveVersion,
+            'Implementation-Vendor'   : 'example',
+            'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            'Automatic-Module-Name'   : 'com.example.ipv6relay',
+            'Built-On-Minecraft'      : '1.21.1',
+            'Built-On-NeoForge'       : '21.1.211'
+        ])
+    }
+}
