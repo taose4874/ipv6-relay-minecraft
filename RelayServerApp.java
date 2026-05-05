@@ -30,21 +30,58 @@ public class RelayServerApp {
                 System.out.println("     IPv6 中继服务器 v1.0.0");
                 System.out.println("========================================");
                 System.out.println("服务器已启动，端口 " + PORT);
-                System.out.println("正在监听所有网络接口 (IPv4/IPv6)...");
+                System.out.println("正在监听所有网络接口（IPv4/IPv6）...");
                 System.out.println("----------------------------------------");
                 
                 while (running) {
                     Socket clientSocket = serverSocket.accept();
-                    InetAddress clientAddr = clientSocket.getInetAddress();
-                    String clientStr = clientAddr.getHostAddress() + ":" + clientSocket.getPort();
-                    
-                    RelayClient client = new RelayClient(clientSocket, this, clientStr);
-                    executorService.submit(client);
+                    // 先读取第一行，判断是什么连接
+                    handleNewConnection(clientSocket);
                 }
             } catch (IOException e) {
                 if (running) {
                     System.err.println("[ERROR] Server error: " + e.getMessage());
                 }
+            }
+        });
+    }
+
+    private void handleNewConnection(Socket socket) {
+        executorService.submit(() -> {
+            try {
+                // 读取第一行，不使用 BufferedReader（避免缓冲问题）
+                InputStream in = socket.getInputStream();
+                ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream();
+                int b;
+                while ((b = in.read()) != -1 && b != '\n') {
+                    if (b != '\r') {
+                        lineBuffer.write(b);
+                    }
+                }
+                String line = lineBuffer.toString("UTF-8");
+                
+                if (line.startsWith("REGISTER:") || line.startsWith("UNREGISTER:") || line.equals("HEARTBEAT")) {
+                    // 这是控制连接
+                    RelayClient client = new RelayClient(socket, this, line);
+                    executorService.submit(client);
+                } else if (line.startsWith("TUNNEL:")) {
+                    // 这是隧道连接
+                    int port = Integer.parseInt(line.substring(7));
+                    ClientSession session = registeredSessions.get(port);
+                    if (session != null) {
+                        session.addTunnel(socket);
+                        tunnelLogCount++;
+                        if (session.getTunnelQueueSize() == 1 || tunnelLogCount % 10 == 0) {
+                            System.out.println("[TUNNEL] 就绪，端口 " + port + " (队列中: " + session.getTunnelQueueSize() + ")");
+                        }
+                    } else {
+                        socket.close();
+                    }
+                } else {
+                    socket.close();
+                }
+            } catch (Exception e) {
+                try { socket.close(); } catch (Exception ex) {}
             }
         });
     }
@@ -82,11 +119,14 @@ public class RelayServerApp {
         private BufferedReader reader;
         private PrintWriter writer;
         private String clientId;
+        private String firstLine;
 
-        public RelayClient(Socket socket, RelayServerApp server, String clientId) {
+        public RelayClient(Socket socket, RelayServerApp server, String firstLine) {
             this.socket = socket;
             this.server = server;
-            this.clientId = clientId;
+            this.firstLine = firstLine;
+            InetAddress clientAddr = socket.getInetAddress();
+            this.clientId = clientAddr.getHostAddress() + ":" + socket.getPort();
         }
 
         @Override
@@ -95,48 +135,41 @@ public class RelayServerApp {
                 reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
                 writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
                 
+                // 处理已经读取的第一行
+                handleLine(firstLine);
+                
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("REGISTER:")) {
-                        String[] parts = line.split(":");
-                        int localPort = Integer.parseInt(parts[2]); // 本地端口只记录，不用来分配
-                        
-                        // 不管本地端口是什么，都从 25567 开始分配公开端口
-                        int assignedPort = 25567;
-                        while (server.getSession(assignedPort) != null) {
-                            assignedPort++;
-                        }
-                        
-                        ClientSession session = new ClientSession(assignedPort, this);
-                        server.registerSession(assignedPort, session);
-                        
-                        sendMessage("REGISTERED:" + assignedPort);
-                        
-                    } else if (line.startsWith("TUNNEL:")) {
-                        int port = Integer.parseInt(line.substring(7));
-                        ClientSession session = server.getSession(port);
-                        if (session != null) {
-                            long connectTime = System.currentTimeMillis();
-                            session.addTunnel(socket, this);
-                            
-                            tunnelLogCount++;
-                            if (session.getTunnelQueueSize() == 1 || tunnelLogCount % 10 == 0) {
-                                System.out.println("[TUNNEL] 就绪，端口 " + port + " (队列中: " + session.getTunnelQueueSize() + ")");
-                            }
-                        }
-                        return;
-                        
-                    } else if (line.startsWith("UNREGISTER:")) {
-                        int port = Integer.parseInt(line.substring(11));
-                        server.unregisterSession(port);
-                        
-                    } else if (line.equals("HEARTBEAT")) {
-                        sendMessage("HEARTBEAT_ACK");
-                    }
+                    handleLine(line);
                 }
             } catch (IOException e) {
             } finally {
                 close();
+            }
+        }
+
+        private void handleLine(String line) {
+            if (line.startsWith("REGISTER:")) {
+                String[] parts = line.split(":");
+                int localPort = Integer.parseInt(parts[2]);
+                
+                // 不管本地端口是什么，都从 25567 开始分配公开端口
+                int assignedPort = 25567;
+                while (server.getSession(assignedPort) != null) {
+                    assignedPort++;
+                }
+                
+                ClientSession session = new ClientSession(assignedPort, this);
+                server.registerSession(assignedPort, session);
+                
+                sendMessage("REGISTERED:" + assignedPort);
+                
+            } else if (line.startsWith("UNREGISTER:")) {
+                int port = Integer.parseInt(line.substring(11));
+                server.unregisterSession(port);
+                
+            } else if (line.equals("HEARTBEAT")) {
+                sendMessage("HEARTBEAT_ACK");
             }
         }
 
@@ -183,7 +216,7 @@ public class RelayServerApp {
             return tunnelQueue.size();
         }
 
-        public void addTunnel(Socket tunnelSocket, RelayClient client) {
+        public void addTunnel(Socket tunnelSocket) {
             tunnelQueue.offer(tunnelSocket);
         }
 
@@ -323,7 +356,7 @@ public class RelayServerApp {
                             ", Tunnels: " + entry.getValue().getTunnelQueueSize());
                     }
                 }
-                System.out.println("===========================");
+                System.out.println("============================");
             } else {
                 System.out.println("[INFO] Unknown command. Available: quit, list");
             }
