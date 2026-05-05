@@ -70,3 +70,26 @@ jar {
         ])
     }
 }
+
+// 中继服务端编译任务
+task relayServer(type: Jar) {
+    manifest {
+        attributes([
+            'Main-Class': 'RelayServerApp'
+        ])
+    }
+    dependsOn compileRelayServer
+    from compileRelayServer.destinationDir
+    archiveBaseName = 'RelayServer'
+    archiveVersion = ''
+}
+
+task compileRelayServer(type: JavaCompile) {
+    source = file('RelayServerApp.java')
+    destinationDirectory = file('build/relayServer')
+    sourceCompatibility = '21'
+    targetCompatibility = '21'
+    classpath = files()
+}
+
+build.dependsOn relayServer

@@ -24,13 +24,13 @@ public class RelayServerApp {
             try {
                 serverSocket = new ServerSocket();
                 serverSocket.setReuseAddress(true);
-                serverSocket.bind(new InetSocketAddress(InetAddress.getByName("::"), PORT));
+                serverSocket.bind(new InetSocketAddress(PORT));
                 
                 System.out.println("========================================");
                 System.out.println("     IPv6 中继服务器 v1.0.0");
                 System.out.println("========================================");
                 System.out.println("服务器已启动，端口 " + PORT);
-                System.out.println("正在监听 IPv6 地址...");
+                System.out.println("正在监听所有网络接口 (IPv4/IPv6)...");
                 System.out.println("----------------------------------------");
                 
                 while (running) {
@@ -99,12 +99,10 @@ public class RelayServerApp {
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("REGISTER:")) {
                         String[] parts = line.split(":");
-                        int port = Integer.parseInt(parts[2]);
+                        int localPort = Integer.parseInt(parts[2]); // 本地端口只记录，不用来分配
                         
-                        int assignedPort = port;
-                        if (assignedPort < 25567 || assignedPort > 65535) {
-                            assignedPort = 25567;
-                        }
+                        // 不管本地端口是什么，都从 25567 开始分配公开端口
+                        int assignedPort = 25567;
                         while (server.getSession(assignedPort) != null) {
                             assignedPort++;
                         }
@@ -194,9 +192,9 @@ public class RelayServerApp {
                 try {
                     playerServerSocket = new ServerSocket();
                     playerServerSocket.setReuseAddress(true);
-                    playerServerSocket.bind(new InetSocketAddress(InetAddress.getByName("::"), port));
+                    playerServerSocket.bind(new InetSocketAddress(port));
                     
-                    System.out.println("[LISTEN] 玩家连接监听已启动，端口 " + port);
+                    System.out.println("[LISTEN] 玩家连接监听已启动，端口 " + port + " (支持 IPv4/IPv6)");
                     
                     while (running && !playerServerSocket.isClosed()) {
                         try {
