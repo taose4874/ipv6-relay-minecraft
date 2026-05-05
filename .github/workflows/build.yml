@@ -23,11 +23,11 @@ jobs:
 
     - name: 设置 Gradle
       uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.8'
 
     - name: 构建Mod
-      run: |
-        chmod +x gradlew.bat
-        ./gradlew build
+      run: gradle build
 
     - name: 编译中继服务器
       run: javac -encoding UTF-8 RelayServerApp.java
