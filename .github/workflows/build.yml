@@ -1,0 +1,56 @@
+name: 构建Mod
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 设置 JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: 设置 Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: 构建Mod
+      run: |
+        chmod +x gradlew.bat
+        ./gradlew build
+
+    - name: 编译中继服务器
+      run: javac -encoding UTF-8 RelayServerApp.java
+
+    - name: 打包中继服务器JAR
+      run: |
+        mkdir -p staging/META-INF
+        echo "Manifest-Version: 1.0" > staging/META-INF/MANIFEST.MF
+        echo "Main-Class: RelayServerApp" >> staging/META-INF/MANIFEST.MF
+        echo "" >> staging/META-INF/MANIFEST.MF
+        cp RelayServerApp*.class staging/
+        cd staging
+        jar -cfm ../RelayServer.jar META-INF/MANIFEST.MF *.class
+        cd ..
+
+    - name: 上传Mod
+      uses: actions/upload-artifact@v4
+      with:
+        name: IPv6Relay-Mod
+        path: build/libs/*.jar
+
+    - name: 上传中继服务器
+      uses: actions/upload-artifact@v4
+      with:
+        name: RelayServer
+        path: RelayServer.jar
