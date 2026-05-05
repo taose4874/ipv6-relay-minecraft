@@ -1,95 +1,94 @@
-# IPv6 Relay Mod for Minecraft 1.21.1
+# IPv6 中继联机 Mod - Minecraft 1.21.1
 
-## Overview
+## 简介
 
-This mod enables IPv6 connectivity for Minecraft servers, allowing players to connect to IPv6-only servers through a relay system.
+通过 IPv6 中继服务器实现 Minecraft 联机，让没有公网 IPv4 的玩家也能轻松开服联机。
 
-## Features
+## 功能特性
 
-- **IPv6 Support**: Connect to IPv6 servers that cannot be directly accessed
-- **Relay System**: Use a relay server to bridge connections between IPv6 devices
-- **GUI Interface**: Configure relay settings in-game with a simple GUI
-- **Cross-Platform**: Works on Windows, macOS, and Linux
+- **IPv6 中继**：通过中继服务器桥接连接，无需公网 IPv4
+- **自动检测局域网端口**：开局域网后自动检测端口
+- **图形界面**：游戏内配置中继地址，一键连接/断开
+- **配置持久化**：中继地址自动保存，重启不丢失
+- **跨平台**：支持 Windows、macOS、Linux
 
-## Requirements
+## 环境要求
 
 - Minecraft 1.21.1
-- Forge 47.0.1 or later
-- Java 21 or later
+- NeoForge 21.1.x
+- Java 21 或更高版本
 
-## Installation
+## 安装方法
 
-1. Download the mod JAR file
-2. Place it in your Minecraft `mods` folder
-3. Run Minecraft with Forge
+1. 下载 Mod 的 jar 文件（`IPv6Relay-1.0.0.jar`）
+2. 放入 Minecraft 的 `mods` 文件夹
+3. 使用 NeoForge 启动 Minecraft
 
-## Usage
+## 使用方法
 
-### Starting the Relay Server
+### 启动中继服务器
 
-1. Compile the standalone relay server:
-   ```bash
-   javac RelayServerApp.java
-   ```
+1. 进入 `IPv6中继服务器` 目录
+2. 双击 `启动服务器.bat`（Windows）或运行 `java -jar RelayServer.jar`
+3. 服务器将在 25566 端口监听 IPv6 连接
 
-2. Run the relay server:
-   ```bash
-   java RelayServerApp
-   ```
+### 游戏内配置
 
-3. The server will listen on port 25566 for IPv6 connections.
+1. 开放局域网（对局域网开放）
+2. 按 `R` 键打开中继配置界面
+3. 输入中继服务器地址和端口
+4. 点击「连接」建立中继
+5. 将分配到的地址（如 `mcyfwq.cn:25567`）分享给朋友即可联机
 
-### In-Game Configuration
-
-1. Press `R` key to open the relay configuration GUI
-2. Enter the relay server IPv6 address and port
-3. Enter the target server address (the IPv6 server you want to connect to)
-4. Click "Connect" to establish the relay connection
-
-## Project Structure
+## 项目结构
 
 ```
-ipv6-relay-mod/
 ├── src/main/java/com/example/ipv6relay/
-│   ├── IPv6Relay.java          # Main mod class
+│   ├── IPv6Relay.java              # Mod 主类
 │   ├── config/
-│   │   └── RelayConfig.java    # Configuration handling
+│   │   └── RelayConfig.java        # 配置管理
+│   ├── events/
+│   │   ├── ClientEvents.java       # 客户端事件（端口检测）
+│   │   ├── ServerEvents.java       # 服务端事件
+│   │   └── CommonEvents.java       # 通用事件
 │   ├── gui/
-│   │   ├── RelayGui.java       # Configuration GUI
-│   │   └── RelayButton.java    # Key binding handler
-│   ├── networking/
-│   │   ├── RelayServer.java    # In-game relay server
-│   │   ├── IPv6PacketRelay.java # Packet relay system
-│   │   ├── IPv6Networking.java # IPv6 connection handling
-│   │   ├── PacketHandler.java  # Network packet registration
-│   │   └── RelayPacket.java    # Custom packet class
-│   └── events/
-│       ├── ClientEvents.java   # Client-side events
-│       ├── ServerEvents.java   # Server-side events
-│       └── CommonEvents.java   # Common events
-├── src/main/resources/
-│   ├── META-INF/
-│   │   └── mods.toml           # Mod metadata
-│   ├── assets/ipv6relay/lang/
-│   │   └── en_us.json          # Language file
-│   └── pack.mcmeta             # Resource pack metadata
-├── RelayServerApp.java         # Standalone relay server
-├── build.gradle                # Gradle build configuration
-├── settings.gradle             # Gradle settings
-└── gradlew.bat                 # Gradle wrapper (Windows)
+│   │   ├── RelayGui.java           # 中继配置界面
+│   │   ├── RelayButton.java        # 按钮组件
+│   │   └── PauseMenuIntegration.java # 暂停菜单集成
+│   └── networking/
+│       ├── IPv6PacketRelay.java    # 中继客户端（隧道管理）
+│       └── RelayServer.java        # 内置中继服务
+├── RelayServerApp.java             # 独立中继服务器
+├── IPv6中继服务器/
+│   ├── RelayServer.jar             # 编译好的中继服务器
+│   ├── IPv6Relay-1.0.0.jar         # 编译好的 Mod
+│   ├── 启动服务器.bat               # 一键启动脚本
+│   └── 使用说明.md                  # 使用说明
+├── build.gradle                    # Gradle 构建配置
+└── settings.gradle                 # Gradle 设置
 ```
 
-## Building
+## 构建
 
-To build the mod:
+```bash
+./gradlew build
+```
 
-1. Ensure you have Java 21 and Gradle installed
-2. Run:
-   ```bash
-   ./gradlew build
-   ```
-3. The built JAR will be in `build/libs/`
+构建产物在 `build/libs/` 目录下。
 
-## License
+## 工作原理
 
-This project is licensed under the MIT License.
+```
+玩家 → 中继服务器(公网IPv6) → 隧道 → 本地Minecraft服务器
+```
+
+1. 开服方连接中继服务器并注册本地端口
+2. 中继服务器分配一个公开端口
+3. 开服方预先建立隧道到中继
+4. 玩家连接中继的公开端口
+5. 中继将玩家连接与隧道桥接
+6. 数据双向转发，实现联机
+
+## 许可证
+
+MIT License
