@@ -69,23 +69,36 @@ class TunnelAcceptor(threading.Thread):
             self.log_queue.put((f"[ERROR] 启动玩家监听失败: {e}", "error"))
 
     def bridge(self, socket1, socket2, player_addr):
+        def forward(sock_in, sock_out):
+            try:
+                while True:
+                    data = sock_in.recv(8192)
+                    if not data:
+                        break
+                    sock_out.sendall(data)
+            except:
+                pass
+            finally:
+                try:
+                    sock_in.close()
+                except:
+                    pass
+                try:
+                    sock_out.close()
+                except:
+                    pass
+        
         try:
-            while True:
-                data = socket1.recv(8192)
-                if not data:
-                    break
-                socket2.sendall(data)
-        except:
-            pass
+            # 双向转发
+            t1 = threading.Thread(target=forward, args=(socket1, socket2))
+            t2 = threading.Thread(target=forward, args=(socket2, socket1))
+            t1.daemon = True
+            t2.daemon = True
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
         finally:
-            try:
-                socket1.close()
-            except:
-                pass
-            try:
-                socket2.close()
-            except:
-                pass
             try:
                 self.bridges.remove((threading.current_thread(), socket1, socket2, player_addr))
             except:
