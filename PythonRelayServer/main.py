@@ -1,6 +1,8 @@
 import sys
 import socket
 import threading
+import time
+from collections import defaultdict
 from queue import Queue
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QTextEdit, 
@@ -8,6 +10,25 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHeaderView, QDialog, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
+
+
+class RateLimiter:
+    def __init__(self, max_connections=10, time_window=5):
+        self.max_connections = max_connections
+        self.time_window = time_window
+        self.connections = defaultdict(list)
+        self.lock = threading.Lock()
+    
+    def check_and_record(self, ip):
+        with self.lock:
+            now = time.time()
+            # 清理过期记录
+            self.connections[ip] = [t for t in self.connections[ip] if now - t < self.time_window]
+            # 检查是否超限
+            if len(self.connections[ip]) >= self.max_connections:
+                return False
+            self.connections[ip].append(now)
+            return True
 
 
 class SessionInfo:
@@ -31,6 +52,9 @@ class TunnelAcceptor(threading.Thread):
         self.running = True
         self.server_socket = None
         self.bridges = []
+        self.rate_limiter = RateLimiter(max_connections=10, time_window=3)
+        self.active_connections = 0
+        self.max_connections = 50  # 最大同时连接数
 
     def run(self):
         try:
@@ -45,11 +69,26 @@ class TunnelAcceptor(threading.Thread):
                     self.server_socket.settimeout(1.0)
                     try:
                         client_socket, addr = self.server_socket.accept()
+                        player_ip = addr[0]
+                        
+                        # 检查速率限制
+                        if not self.rate_limiter.check_and_record(player_ip):
+                            self.log_queue.put((f"[RATE_LIMIT] 速率限制触发，拒绝 {player_ip}", "warn"))
+                            client_socket.close()
+                            continue
+                        
+                        # 检查最大连接数
+                        if self.active_connections >= self.max_connections:
+                            self.log_queue.put((f"[MAX_CONN] 连接数超限，拒绝 {player_ip}", "warn"))
+                            client_socket.close()
+                            continue
+                        
                         self.log_queue.put((f"[玩家] 已连接端口 {self.port} 来自 {addr[0]}:{addr[1]}", "info"))
                         
                         tunnel_socket = self.tunnel_queue.get()
                         
                         if tunnel_socket and self.running:
+                            self.active_connections += 1
                             bridge1 = threading.Thread(target=self.bridge, args=(client_socket, tunnel_socket, addr))
                             bridge1.daemon = True
                             bridge1.start()
@@ -99,6 +138,7 @@ class TunnelAcceptor(threading.Thread):
             t1.join()
             t2.join()
         finally:
+            self.active_connections -= 1  # 减少连接计数
             try:
                 self.bridges.remove((threading.current_thread(), socket1, socket2, player_addr))
             except:
