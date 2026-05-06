@@ -21,6 +21,12 @@ ENV/
 dist/
 build/
 *.egg-info/
+*.spec
+*.exe
+build-gui/
+IPv6中继服务器/*.exe
+!IPv6中继服务器/RelayServer.jar
+!IPv6中继服务器/IPv6Relay-1.0.0.jar
 
 # IDE
 .vscode/
