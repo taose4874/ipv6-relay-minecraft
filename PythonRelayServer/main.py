@@ -3,11 +3,10 @@ import socket
 import threading
 import time
 from collections import defaultdict
-from queue import Queue
+from queue import Queue, Empty
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QTextEdit, 
-                             QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QDialog, QMessageBox)
+                             QLineEdit, QGroupBox)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
 
@@ -38,7 +37,6 @@ class SessionInfo:
         self.control_socket = None
         self.tunnel_queue = Queue()
         self.acceptor = None
-        self.active_bridges = []
         self.unregistered = False  # 标记是否已注销
 
 
@@ -51,10 +49,9 @@ class TunnelAcceptor(threading.Thread):
         self.session_update_callback = session_update_callback
         self.running = True
         self.server_socket = None
-        self.bridges = []
-        self.rate_limiter = RateLimiter(max_connections=10, time_window=3)
         self.active_connections = 0
         self.max_connections = 50  # 最大同时连接数
+        self.rate_limiter = RateLimiter(max_connections=10, time_window=3)
 
     def run(self):
         try:
@@ -85,14 +82,19 @@ class TunnelAcceptor(threading.Thread):
                         
                         self.log_queue.put((f"[玩家] 已连接端口 {self.port} 来自 {addr[0]}:{addr[1]}", "info"))
                         
-                        tunnel_socket = self.tunnel_queue.get()
+                        # 带超时获取隧道，防止卡死
+                        try:
+                            tunnel_socket = self.tunnel_queue.get(timeout=5)
+                        except Empty:
+                            self.log_queue.put((f"[WARN] 等待隧道超时，拒绝 {addr[0]}:{addr[1]}", "warn"))
+                            client_socket.close()
+                            continue
                         
                         if tunnel_socket and self.running:
                             self.active_connections += 1
-                            bridge1 = threading.Thread(target=self.bridge, args=(client_socket, tunnel_socket, addr))
-                            bridge1.daemon = True
-                            bridge1.start()
-                            self.bridges.append((bridge1, client_socket, tunnel_socket, addr))
+                            bridge_thread = threading.Thread(target=self.bridge, args=(client_socket, tunnel_socket))
+                            bridge_thread.daemon = True
+                            bridge_thread.start()
                             if self.session_update_callback:
                                 self.session_update_callback()
                         else:
@@ -107,7 +109,7 @@ class TunnelAcceptor(threading.Thread):
         except Exception as e:
             self.log_queue.put((f"[ERROR] 启动玩家监听失败: {e}", "error"))
 
-    def bridge(self, socket1, socket2, player_addr):
+    def bridge(self, socket1, socket2):
         def forward(sock_in, sock_out):
             try:
                 while True:
@@ -135,31 +137,20 @@ class TunnelAcceptor(threading.Thread):
             t2.daemon = True
             t1.start()
             t2.start()
-            t1.join()
-            t2.join()
+            t1.join(timeout=30)  # 增加超时，防止卡死
+            t2.join(timeout=30)
         finally:
             self.active_connections -= 1  # 减少连接计数
-            try:
-                self.bridges.remove((threading.current_thread(), socket1, socket2, player_addr))
-            except:
-                pass
             if self.session_update_callback:
                 self.session_update_callback()
 
-    def get_active_players(self):
-        return [addr for (_, _, _, addr) in self.bridges if threading.current_thread().is_alive() or len(self.bridges) > 0]
-
     def stop(self):
         self.running = False
-        for (_, s1, s2, _) in self.bridges:
-            try:
-                s1.close()
-            except:
-                pass
-            try:
-                s2.close()
-            except:
-                pass
+        # 向队列发送空值，唤醒阻塞的get()
+        try:
+            self.tunnel_queue.put(None)
+        except:
+            pass
         if self.server_socket:
             try:
                 self.server_socket.close()
@@ -266,17 +257,20 @@ class ControlServer(threading.Thread):
         try:
             reader = client_socket.makefile('r')
             while self.running:
-                line = reader.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if line == "HEARTBEAT":
-                    client_socket.sendall(b"HEARTBEAT_ACK\n")
-                elif line.startswith("UNREGISTER:"):
-                    unreg_port = int(line.split(":")[1])
-                    if unreg_port == port:
-                        self.handle_unregister(client_socket, line)
+                try:
+                    line = reader.readline()
+                    if not line:
                         break
+                    line = line.strip()
+                    if line == "HEARTBEAT":
+                        client_socket.sendall(b"HEARTBEAT_ACK\n")
+                    elif line.startswith("UNREGISTER:"):
+                        unreg_port = int(line.split(":")[1])
+                        if unreg_port == port:
+                            self.handle_unregister(client_socket, line)
+                            break
+                except:
+                    break
         except Exception as e:
             # 只在不是正常断开时记录警告
             with self.lock:
@@ -319,7 +313,8 @@ class ControlServer(threading.Thread):
                     while not session.tunnel_queue.empty():
                         try:
                             sock = session.tunnel_queue.get_nowait()
-                            sock.close()
+                            if sock:
+                                sock.close()
                         except:
                             pass
                     del self.sessions[port]
@@ -334,19 +329,14 @@ class ControlServer(threading.Thread):
         except Exception as e:
             self.log_queue.put((f"[ERROR] 注销失败: {e}", "error"))
 
-    def kick_session(self, port):
-        with self.lock:
-            if port in self.sessions and not self.sessions[port].unregistered:
-                self.log_queue.put((f"[KICK] 正在踢出端口 {port} 的会话", "info"))
-                self.handle_unregister(None, f"UNREGISTER:{port}")
-                return True
-            return False
-
     def stop(self):
         self.running = False
         with self.lock:
             for port in list(self.sessions.keys()):
-                self.handle_unregister(None, f"UNREGISTER:{port}")
+                try:
+                    self.handle_unregister(None, f"UNREGISTER:{port}")
+                except:
+                    pass
         if self.server_socket:
             try:
                 self.server_socket.close()
@@ -354,84 +344,10 @@ class ControlServer(threading.Thread):
                 pass
 
 
-class SessionListDialog(QDialog):
-    def __init__(self, server, log_queue, parent=None):
-        super().__init__(parent)
-        self.server = server
-        self.log_queue = log_queue
-        self.setWindowTitle("会话列表")
-        self.setMinimumSize(800, 500)
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout()
-        
-        # 表格
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["端口", "客户端地址", "隧道数量", "操作"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.table)
-        
-        # 按钮
-        button_layout = QHBoxLayout()
-        refresh_btn = QPushButton("刷新")
-        refresh_btn.clicked.connect(self.refresh)
-        button_layout.addWidget(refresh_btn)
-        
-        close_btn = QPushButton("关闭")
-        close_btn.clicked.connect(self.accept)
-        button_layout.addWidget(close_btn)
-        
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
-        
-        self.refresh()
-
-    def refresh(self):
-        self.table.setRowCount(0)
-        if not self.server or not self.server.sessions:
-            return
-        
-        for port, session in self.server.sessions.items():
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            
-            # 端口
-            self.table.setItem(row, 0, QTableWidgetItem(str(port)))
-            
-            # 客户端地址
-            addr_str = f"{session.client_addr[0]}:{session.client_addr[1]}" if session.client_addr else "未知"
-            self.table.setItem(row, 1, QTableWidgetItem(addr_str))
-            
-            # 隧道数量
-            tunnel_count = session.tunnel_queue.qsize()
-            self.table.setItem(row, 2, QTableWidgetItem(str(tunnel_count)))
-            
-            # 操作按钮
-            kick_btn = QPushButton("踢出")
-            kick_btn.clicked.connect(lambda _, p=port: self.kick_session(p))
-            self.table.setCellWidget(row, 3, kick_btn)
-
-    def kick_session(self, port):
-        try:
-            reply = QMessageBox.question(self, "确认踢出", f"确定要踢出端口 {port} 的会话吗？", 
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                if self.server.kick_session(port):
-                    self.log_queue.put((f"[KICK] 已踢出端口 {port} 的会话", "info"))
-                    QMessageBox.information(self, "成功", f"已踢出端口 {port} 的会话")
-                    self.refresh()
-                else:
-                    QMessageBox.warning(self, "失败", "踢出失败，会话可能已不存在")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"踢出会话时出错: {e}")
-
-
 class RelayServerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🌐 IPv6 中继服务器 v1.1.1 (Python)")
+        self.setWindowTitle("🌐 IPv6 中继服务器 v1.2.0 (Python)")
         self.setMinimumSize(900, 600)
         self.server = None
         self.log_queue = Queue()
@@ -512,29 +428,6 @@ class RelayServerWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
         
-        self.list_button = QPushButton("📋 会话列表")
-        self.list_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                font-size: 14px;
-                padding: 10px 30px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #0b7dda;
-            }
-            QPushButton:pressed {
-                background-color: #0a6dc0;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-        """)
-        self.list_button.clicked.connect(self.show_sessions)
-        self.list_button.setEnabled(False)
-        button_layout.addWidget(self.list_button)
-        
         main_layout.addLayout(button_layout)
         
         self.status_label = QLabel("⚪ 服务未启动")
@@ -587,7 +480,6 @@ class RelayServerWindow(QMainWindow):
             
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            self.list_button.setEnabled(True)
             self.port_input.setEnabled(False)
             self.status_label.setText("🟢 服务运行中...")
             self.status_label.setStyleSheet("color: #4CAF50;")
@@ -598,21 +490,17 @@ class RelayServerWindow(QMainWindow):
     def stop_server(self):
         if self.server:
             self.server.stop()
+            # 等待一小会儿，让线程有时间关闭
+            time.sleep(0.5)
             self.server = None
             
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.list_button.setEnabled(False)
         self.port_input.setEnabled(True)
         self.status_label.setText("🔴 服务已停止")
         self.status_label.setStyleSheet("color: #f44336;")
         self.session_stats_label.setText("已注册会话: 0")
         self.append_log("[INFO] 服务器已停止", "info")
-
-    def show_sessions(self):
-        if self.server:
-            dialog = SessionListDialog(self.server, self.log_queue, self)
-            dialog.exec()
 
     def append_log(self, message, level="info"):
         cursor = self.log_text.textCursor()
