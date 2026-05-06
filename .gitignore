@@ -1,3 +1,4 @@
+# Gradle
 .gradle/
 build/
 temp_build/
@@ -8,17 +9,32 @@ temp_extract/
 !IPv6中继服务器/RelayServer.jar
 !IPv6中继服务器/IPv6Relay-1.0.0.jar
 
-ipv6联机老版本备份/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+dist/
+build/
+*.egg-info/
+
+# IDE
 .vscode/
 .settings/
 .classpath
 .project
+.idea/
 
+# Old files
+ipv6联机老版本备份/
 *.log
 *.tmp
 *.bak
 *.zip
-
 RelayServer/
 tools/
 test.bat
