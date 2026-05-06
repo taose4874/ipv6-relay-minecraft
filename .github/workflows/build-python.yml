@@ -28,7 +28,7 @@ jobs:
     - name: Build with PyInstaller
       run: |
         cd PythonRelayServer
-        pyinstaller --onefile --name "IPv6中继服务器" main.py
+        pyinstaller --onefile --noconsole --name "IPv6中继服务器" main.py
 
     - name: Check build output
       run: |
