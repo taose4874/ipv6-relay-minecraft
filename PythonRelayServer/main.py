@@ -18,6 +18,7 @@ class SessionInfo:
         self.tunnel_queue = Queue()
         self.acceptor = None
         self.active_bridges = []
+        self.unregistered = False  # 标记是否已注销
 
 
 class TunnelAcceptor(threading.Thread):
@@ -48,7 +49,7 @@ class TunnelAcceptor(threading.Thread):
                         
                         tunnel_socket = self.tunnel_queue.get()
                         
-                        if tunnel_socket:
+                        if tunnel_socket and self.running:
                             bridge1 = threading.Thread(target=self.bridge, args=(client_socket, tunnel_socket, addr))
                             bridge1.daemon = True
                             bridge1.start()
@@ -224,14 +225,20 @@ class ControlServer(threading.Thread):
                         self.handle_unregister(client_socket, line)
                         break
         except Exception as e:
-            self.log_queue.put((f"[WARN] 控制连接异常: {e}", "warn"))
+            # 只在不是正常断开时记录警告
+            with self.lock:
+                if port in self.sessions and not self.sessions[port].unregistered:
+                    self.log_queue.put((f"[WARN] 控制连接异常: {e}", "warn"))
         finally:
-            self.handle_unregister(None, f"UNREGISTER:{port}")
+            # 只有在会话还没被注销时才处理
+            with self.lock:
+                if port in self.sessions and not self.sessions[port].unregistered:
+                    self.handle_unregister(None, f"UNREGISTER:{port}")
 
     def handle_tunnel(self, client_socket, line):
         port = int(line.split(":")[1])
         with self.lock:
-            if port in self.sessions:
+            if port in self.sessions and not self.sessions[port].unregistered:
                 self.sessions[port].tunnel_queue.put(client_socket)
                 queue_size = self.sessions[port].tunnel_queue.qsize()
                 if queue_size == 1:
@@ -245,8 +252,9 @@ class ControlServer(threading.Thread):
         try:
             port = int(line.split(":")[1])
             with self.lock:
-                if port in self.sessions:
+                if port in self.sessions and not self.sessions[port].unregistered:
                     session = self.sessions[port]
+                    session.unregistered = True  # 标记为已注销
                     if session.acceptor:
                         session.acceptor.stop()
                     if session.control_socket:
@@ -275,7 +283,7 @@ class ControlServer(threading.Thread):
 
     def kick_session(self, port):
         with self.lock:
-            if port in self.sessions:
+            if port in self.sessions and not self.sessions[port].unregistered:
                 self.log_queue.put((f"[KICK] 正在踢出端口 {port} 的会话", "info"))
                 self.handle_unregister(None, f"UNREGISTER:{port}")
                 return True
@@ -353,21 +361,24 @@ class SessionListDialog(QDialog):
             self.table.setCellWidget(row, 3, kick_btn)
 
     def kick_session(self, port):
-        reply = QMessageBox.question(self, "确认踢出", f"确定要踢出端口 {port} 的会话吗？", 
-                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            if self.server.kick_session(port):
-                self.log_queue.put((f"[KICK] 已踢出端口 {port} 的会话", "info"))
-                QMessageBox.information(self, "成功", f"已踢出端口 {port} 的会话")
-                self.refresh()
-            else:
-                QMessageBox.warning(self, "失败", "踢出失败，会话可能已不存在")
+        try:
+            reply = QMessageBox.question(self, "确认踢出", f"确定要踢出端口 {port} 的会话吗？", 
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                if self.server.kick_session(port):
+                    self.log_queue.put((f"[KICK] 已踢出端口 {port} 的会话", "info"))
+                    QMessageBox.information(self, "成功", f"已踢出端口 {port} 的会话")
+                    self.refresh()
+                else:
+                    QMessageBox.warning(self, "失败", "踢出失败，会话可能已不存在")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"踢出会话时出错: {e}")
 
 
 class RelayServerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🌐 IPv6 中继服务器 v1.1.0 (Python)")
+        self.setWindowTitle("🌐 IPv6 中继服务器 v1.1.1 (Python)")
         self.setMinimumSize(900, 600)
         self.server = None
         self.log_queue = Queue()
